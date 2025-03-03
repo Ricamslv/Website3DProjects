@@ -1,0 +1,103 @@
+name: Add Issue to Project with Metadata
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  add_to_project:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate token
+        id: generate-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PEM }}
+
+      - name: Get project data
+        env:
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+          ORGANIZATION: your-organization
+          PROJECT_NUMBER: your-project-number
+        run: |
+          gh api graphql -f query='
+            query($org: String!, $number: Int!) {
+              organization(login: $org) {
+                projectV2(number: $number) {
+                  id
+                  fields(first: 20) {
+                    nodes {
+                      ... on ProjectV2Field {
+                        id
+                        name
+                      }
+                    }
+                  }
+                }
+              }
+            }' -f org=$ORGANIZATION -F number=$PROJECT_NUMBER > project_data.json
+
+          echo 'PROJECT_ID='$(jq -r '.data.organization.projectV2.id' project_data.json) >> $GITHUB_ENV
+          echo 'DATE_FIELD_ID='$(jq -r '.data.organization.projectV2.fields.nodes[] | select(.name== "Date Added") | .id' project_data.json) >> $GITHUB_ENV
+          echo 'CREATOR_FIELD_ID='$(jq -r '.data.organization.projectV2.fields.nodes[] | select(.name== "Creator") | .id' project_data.json) >> $GITHUB_ENV
+
+      - name: Add issue to project
+        env:
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+          ISSUE_ID: ${{ github.event.issue.node_id }}
+        run: |
+          item_id=$(gh api graphql -f query='
+            mutation($project: ID!, $issue: ID!) {
+              addProjectV2ItemById(input: {projectId: $project, contentId: $issue}) {
+                item {
+                  id
+                }
+              }
+            }' -f project=$PROJECT_ID -f issue=$ISSUE_ID --jq '.data.addProjectV2ItemById.item.id')
+
+          echo 'ITEM_ID='$item_id >> $GITHUB_ENV
+
+      - name: Get date and creator
+        run: |
+          echo "DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> $GITHUB_ENV
+          echo "CREATOR=${{ github.event.issue.user.login }}" >> $GITHUB_ENV
+
+      - name: Set fields
+        env:
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+        run: |
+          gh api graphql -f query='
+            mutation (
+              $project: ID!
+              $item: ID!
+              $date_field: ID!
+              $date_value: String!
+              $creator_field: ID!
+              $creator_value: String!
+            ) {
+              updateDate: updateProjectV2ItemFieldValue(input: {
+                projectId: $project
+                itemId: $item
+                fieldId: $date_field
+                value: {
+                  text: $date_value
+                }
+              }) {
+                projectV2Item {
+                  id
+                }
+              }
+              updateCreator: updateProjectV2ItemFieldValue(input: {
+                projectId: $project
+                itemId: $item
+                fieldId: $creator_field
+                value: {
+                  text: $creator_value
+                }
+              }) {
+                projectV2Item {
+                  id
+                }
+              }
+            }' -f project=$PROJECT_ID -f item=$ITEM_ID -f date_field=$DATE_FIELD_ID -f date_value=$DATE -f creator_field=$CREATOR_FIELD_ID -f creator_value=$CREATOR --silent
