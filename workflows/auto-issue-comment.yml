@@ -20,4 +20,4 @@ jobs:
           body: |
             **Date Created:** ${{ github.event.issue.created_at }}
         env:
-          GITHUB_TOKEN: ${{ secrets.Auto_Add }}
+          GITHUB_TOKEN: ${{ secrets.AUTO_ADD }}
