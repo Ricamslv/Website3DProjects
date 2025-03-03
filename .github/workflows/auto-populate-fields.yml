@@ -1,103 +1,48 @@
-name: Add Issue to Project with Metadata
+name: Update GitHub Project Fields
 
 on:
   issues:
-    types: [opened]
+    types: [opened] # Runs when a new issue is created
+  workflow_dispatch: # Allows manual trigger
 
 jobs:
-  add_to_project:
+  update_project:
     runs-on: ubuntu-latest
     steps:
-      - name: Generate token
-        id: generate-token
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ vars.APP_ID }}
-          private-key: ${{ secrets.APP_PEM }}
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-      - name: Get project data
+      - name: Install GitHub CLI
+        run: |
+          sudo apt update
+          sudo apt install gh -y
+
+      - name: Authenticate with GitHub CLI
         env:
-          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
-          ORGANIZATION: your-organization
-          PROJECT_NUMBER: your-project-number
+          GH_PAT: ${{ secrets.GH_PAT }}
         run: |
-          gh api graphql -f query='
-            query($org: String!, $number: Int!) {
-              organization(login: $org) {
-                projectV2(number: $number) {
-                  id
-                  fields(first: 20) {
-                    nodes {
-                      ... on ProjectV2Field {
-                        id
-                        name
-                      }
-                    }
-                  }
-                }
-              }
-            }' -f org=$ORGANIZATION -F number=$PROJECT_NUMBER > project_data.json
+          echo "$GH_PAT" | gh auth login --with-token
 
-          echo 'PROJECT_ID='$(jq -r '.data.organization.projectV2.id' project_data.json) >> $GITHUB_ENV
-          echo 'DATE_FIELD_ID='$(jq -r '.data.organization.projectV2.fields.nodes[] | select(.name== "Date Added") | .id' project_data.json) >> $GITHUB_ENV
-          echo 'CREATOR_FIELD_ID='$(jq -r '.data.organization.projectV2.fields.nodes[] | select(.name== "Creator") | .id' project_data.json) >> $GITHUB_ENV
-
-      - name: Add issue to project
+      - name: Get Issue Data
+        id: issue_data
         env:
-          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
-          ISSUE_ID: ${{ github.event.issue.node_id }}
+          GH_PAT: ${{ secrets.GH_PAT }}
         run: |
-          item_id=$(gh api graphql -f query='
-            mutation($project: ID!, $issue: ID!) {
-              addProjectV2ItemById(input: {projectId: $project, contentId: $issue}) {
-                item {
-                  id
-                }
-              }
-            }' -f project=$PROJECT_ID -f issue=$ISSUE_ID --jq '.data.addProjectV2ItemById.item.id')
+          ISSUE_ID=$(gh issue list --state open --limit 1 --json number --jq '.[0].number')
+          CREATOR=$(gh issue view "$ISSUE_ID" --json author --jq '.author.login')
+          echo "ISSUE_ID=$ISSUE_ID" >> $GITHUB_ENV
+          echo "CREATOR=$CREATOR" >> $GITHUB_ENV
 
-          echo 'ITEM_ID='$item_id >> $GITHUB_ENV
-
-      - name: Get date and creator
-        run: |
-          echo "DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> $GITHUB_ENV
-          echo "CREATOR=${{ github.event.issue.user.login }}" >> $GITHUB_ENV
-
-      - name: Set fields
+      - name: Update GitHub Project Fields
         env:
-          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          ORGANIZATION: Ricamslv
+          PROJECT_NUMBER: 2
         run: |
-          gh api graphql -f query='
-            mutation (
-              $project: ID!
-              $item: ID!
-              $date_field: ID!
-              $date_value: String!
-              $creator_field: ID!
-              $creator_value: String!
-            ) {
-              updateDate: updateProjectV2ItemFieldValue(input: {
-                projectId: $project
-                itemId: $item
-                fieldId: $date_field
-                value: {
-                  text: $date_value
-                }
-              }) {
-                projectV2Item {
-                  id
-                }
-              }
-              updateCreator: updateProjectV2ItemFieldValue(input: {
-                projectId: $project
-                itemId: $item
-                fieldId: $creator_field
-                value: {
-                  text: $creator_value
-                }
-              }) {
-                projectV2Item {
-                  id
-                }
-              }
-            }' -f project=$PROJECT_ID -f item=$ITEM_ID -f date_field=$DATE_FIELD_ID -f date_value=$DATE -f creator_field=$CREATOR_FIELD_ID -f creator_value=$CREATOR --silent
+          if [ -n "$ISSUE_ID" ]; then
+            gh project item-edit --project "$PROJECT_NUMBER" \
+              --field "created_at=$(date +%Y-%m-%d)" \
+              --field "creator=@$CREATOR"
+          else
+            echo "No open issues found. Skipping project update."
+          fi
