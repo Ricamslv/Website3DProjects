@@ -1,23 +1,23 @@
-name: Auto-Comment on New Issues
+name: Auto Date Created for Issues
+
 on:
   issues:
-    types: [opened]
+    types:
+      - opened
 
 jobs:
-  comment:
+  add-date-created:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Post Comment with Creator and Date
-        uses: actions/github-script@v6
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Add created date to the issue
+        uses: peter-evans/create-or-update-comment@v2
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const issueNumber = context.issue.number;
-            const creator = context.payload.issue.user.login;
-            const createdAt = new Date(context.payload.issue.created_at).toISOString();
-            const comment = `👤 **Created by:** @${creator}\n📅 **Date Created:** ${createdAt}`;
-            await github.rest.issues.createComment({
-              ...context.repo,
-              issue_number: issueNumber,
-              body: comment
-            });
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            **Date Created:** ${{ github.event.issue.created_at }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.Auto_Add }}
