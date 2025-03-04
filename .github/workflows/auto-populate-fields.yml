@@ -23,15 +23,35 @@ jobs:
         run: |
           echo "$GH_PAT" | gh auth login --with-token
 
-      - name: Get Issue Data
+      - name: Get Issue and Project Data
         id: issue_data
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
+          ORGANIZATION: Ricamslv
+          PROJECT_NUMBER: 3
         run: |
+          # Get Project ID from Organization Projects
+          PROJECT_ID=$(gh project list --owner "$ORGANIZATION" --format json | jq -r '.[] | select(.number == '"$PROJECT_NUMBER"') | .id')
+
+          # Get the latest issue number
           ISSUE_ID=$(gh issue list --state open --limit 1 --json number --jq '.[0].number')
+
+          # Get the creator's GitHub username
           CREATOR=$(gh issue view "$ISSUE_ID" --json author --jq '.author.login')
+
+          echo "PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
           echo "ISSUE_ID=$ISSUE_ID" >> $GITHUB_ENV
           echo "CREATOR=$CREATOR" >> $GITHUB_ENV
+
+      - name: Get Issue Item ID from Project
+        id: get_item_id
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          # Get the issue item ID from the project
+          ITEM_ID=$(gh project item-list --project-id "$PROJECT_ID" --format json | jq -r '.items[] | select(.content.number == '"$ISSUE_ID"') | .id')
+
+          echo "ITEM_ID=$ITEM_ID" >> $GITHUB_ENV
 
       - name: Update GitHub Project Fields
         env:
@@ -40,7 +60,9 @@ jobs:
           PROJECT_NUMBER: 3
         run: |
           if [ -n "$ISSUE_ID" ]; then
-            gh project item-edit --project "$PROJECT_NUMBER" \
+            PROJECT_ID=$(gh project list --owner "$ORGANIZATION" --format json | jq -r '.[] | select(.number == '"$PROJECT_NUMBER"') | .id')
+            
+            gh project item-edit --project-id "$PROJECT_ID" \
               --field "created_at=$(date +%Y-%m-%d)" \
               --field "creator=@$CREATOR"
           else
